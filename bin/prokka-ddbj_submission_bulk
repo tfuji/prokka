@@ -1,0 +1,49 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+use Time::Piece;
+use Time::Seconds;
+
+my $i = 0;
+my @header =();
+while(<>){
+  chomp;
+  my($fasta, $genus, $species, $strain, @ary) = split /\t/,$_;
+  next unless $fasta;
+  #print "organism: $genus $species $strain\n";
+
+  my $outdir = $fasta;
+  $outdir =~s/\.fasta$//;
+
+  my $locustag = "${genus}_$strain";
+  my $prefix = $locustag.'_'.(localtime->mdy(''));
+  
+  open my $dbj_fh, '>', "$outdir/$prefix.dbj";
+
+  #print join(",",@ary),"\n"  ;
+  my $entry_prev   ='';
+  my $feature_prev ='';
+  @header = @ary if $i ==0;
+  for( my $j=0 ; $j <= $#ary ; $j++ ) {
+     my $entry ='COMMON';
+     my($feature, $qualifier) = split ":", $header[$j];
+     #my $feature_view = ($feature_prev  == '' or $feature != $feature_prev)? $feature : "";
+     #print "###". $feature ."\t". $feature_prev ."\t".$feature_view ."\n";
+     #print $entry ne $entry_prev ? $entry : "" ,"\t",((!$feature_prev or $feature ne $feature_prev)? $feature : ""),"\t",$qualifier,"\t",$ary[$j]."\n" if ($i > 0 );
+     print $dbj_fh $entry ne $entry_prev ? $entry : "" ,"\t",((!$feature_prev or $feature ne $feature_prev)? $feature : ""),"\t",$qualifier,"\t",$ary[$j]."\n" if ($i > 0 );
+     #print "COMMON","\t",((!$feature_prev or $feature ne $feature_prev)? $feature : ""),"\t",$qualifier,"\t",$ary[$j]."\n" if ($i > 0 and $ary[$j]);
+     $entry_prev   = $entry;
+     $feature_prev = $feature;
+  }
+  run("/home/tafujisa/project/prokka/prokka/bin/prokka $fasta --force --outdir $outdir --genus $genus --species $species --strain $strain --kingdom Bacteria --gcode 11 --locustag ${genus}_$strain --increment 10 --proteins /home/tafujisa/project/cyanobacteria_pipline/cyanobase_20150527/cyanobacteria.faa --rnammer --rfam");
+  $i++;
+
+  close($dbj_fh);
+}
+
+sub run {
+  print "Running:", @_,"\n";
+  system(@_)==0 or print "Could not run command:\n";
+}
+

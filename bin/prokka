@@ -217,7 +217,7 @@ my(@Options, $quiet, $debug, $kingdom, $fast, $force, $outdir, $prefix, $cpus, $
              $genus, $species, $strain, $plasmid, 
              $usegenus, $proteins, $hmms, $centre, $scaffolds,
              $rfam, $norrna, $notrna, $rnammer, $rawproduct,
-	     $metagenome, $compliant, $listdb, $citation);
+	     $metagenome, $compliant, $listdb, $citation, $ddbj);
 setOptions();
 
 # . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 
@@ -608,7 +608,7 @@ if ($rfam) {
         -score      => undef,  # possibly x[16] but had problems here with '!'
         -frame      => 0,
         -tag        => {
-          'product' => $x[0],
+          #'product' => $x[0], #for DDBJ
           'inference' => "COORDINATES:profile:$tool",
         }
       );
@@ -1128,6 +1128,7 @@ open my $gff_fh, '>', "$outdir/$prefix.gff";
 my $faa_fh = Bio::SeqIO->new(-file=>">$outdir/$prefix.faa", -format=>'fasta');
 my $ffn_fh = Bio::SeqIO->new(-file=>">$outdir/$prefix.ffn", -format=>'fasta');
 open my $tbl_fh, '>', "$outdir/$prefix.tbl";
+open my $dbj_fh, '>>', "$outdir/$prefix.dbj" if $ddbj;
 my $fsa_fh = Bio::SeqIO->new(-file=>">$outdir/$prefix.fsa", -format=>'fasta');
 
 my $gff_factory = Bio::Tools::GFF->new(-gff_version=>$gffver);
@@ -1139,12 +1140,37 @@ for my $id (@seq) {
 my $fsa_desc = "[gcode=$gcode] [organism=$genus $species] [strain=$strain]";
 $fsa_desc .= " [plasmid=$plasmid]" if $plasmid;
 
+use JSON;
+$ddbj =~s/\\ / /g;
+my $dbj_meta = decode_json($ddbj);
+# output common block of ddbj submission
+#mkdir $outdir unless -e $outdir;
+my @header = @{$dbj_meta->{'keys'}};
+my @ary = @{$dbj_meta->{'values'}};
+#open my $dbj_fh, '>', "$outdir/${locustag}_".localtime->mdy('').".dbj";
+my ($entry_prev, $feature_prev);
+for( my $j=0 ; $j <= $#ary ; $j++ ) { 
+  my $entry ='COMMON';
+  my($feature, $qualifier) = split ":", $header[$j];
+  print $dbj_fh $entry ne $entry_prev ? $entry : "" ,"\t",((!$feature_prev or $feature ne $feature_prev)? $feature : ""),"\t\t",$qualifier,"\t",$ary[$j]."\n";
+  $entry_prev   = $entry;
+  $feature_prev = $feature;
+}
+#close($dbj_fh);
+###
+
 for my $sid (@seq) {
   my $ctg = $seq{$sid}{DNA};
   $ctg->desc($fsa_desc);
   $fsa_fh->write_seq($ctg);
   $ctg->desc(undef);
   print $tbl_fh ">Feature $sid\n";
+  if ($ddbj){
+    print $dbj_fh $sid,"\tsource\t1..", $seq{$sid}{DNA}->length, "\torganism\t$genus $species $strain","\n";
+    print $dbj_fh "\t\t\tstrain\t$strain\n";
+    print $dbj_fh "\t\t\tmol_type\tgenomic DNA\n";
+    print $dbj_fh "\t\t\tplasmid\t$dbj_meta->{'sequences'}->{$sid}->{'name'}\n" if $dbj_meta->{'sequences'}->{$sid}->{'plasmid'} == 1;
+  }
   for my $f ( sort { $a->start <=> $b->start } @{ $seq{$sid}{FEATURE} }) {
     if ($f->primary_tag eq 'CDS' and not $f->has_tag('product')) {
       $f->add_tag_value('product', $HYPO);
@@ -1154,10 +1180,21 @@ for my $sid (@seq) {
     
     my ($L,$R) = ($f->strand >= 0) ? ($f->start,$f->end) : ($f->end,$f->start);
     print {$tbl_fh} "$L\t$R\t",$f->primary_tag,"\n";
+    print {$dbj_fh} "\t",$f->primary_tag,"\t", ($L > $R ? "complement($R..$L)" : "$L..$R") if $ddbj;
+    my $idx =0;
     for my $tag ($f->get_all_tags) {
       next if $tag =~ m/^(ID|Alias)$/; # remove GFF specific tags
       for my $value ($f->get_tag_values($tag)) {
-        print {$tbl_fh} "\t\t\t$tag\t$value\n";
+        print {$tbl_fh}  "\t\t\t$tag\t$value\n";
+        
+        my $mod_tag = $tag;
+        my $mod_value = $value;
+        if ($tag eq 'score'){
+          $mod_tag = 'note';
+          $mod_value = "$tag: $value";
+        } 
+        print {$dbj_fh} ($idx == 0 ? "": "\t\t"),"\t$mod_tag\t$mod_value\n" if $ddbj;
+        $idx++;
       }
     }
 
@@ -1532,6 +1569,7 @@ sub setOptions {
     {OPT=>"norrna!",  VAR=>\$norrna, DEFAULT=>0, DESC=>"Don't run rRNA search"},
     {OPT=>"notrna!",  VAR=>\$notrna, DEFAULT=>0, DESC=>"Don't run tRNA search"},
     {OPT=>"rnammer!",  VAR=>\$rnammer, DEFAULT=>0, DESC=>"Prefer RNAmmer over Barrnap for rRNA prediction"},
+    {OPT=>"ddbj=s",  VAR=>\$ddbj, DEFAULT=>'', DESC=>"Output DDBJ submission file."},
   );
 
   (!@ARGV) && (usage());
